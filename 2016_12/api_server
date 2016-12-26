@@ -5,7 +5,7 @@ API服务器是个很大的话题，结合个人的经验大概整理一下，Ra
 ```
 
 ## Route constraints
-在项目中，第一个接触到请求的，应该就是路由了，所以在一开始的地方就做一些限制，降低内部请求的暴露程度，尽可能的只留出我们需要的请求。这用到很多在route中的限制条件，比如：namespace constraints only等等条件，熟练使用，提高可管理程度。
+在项目中，第一个接触到请求的，应该就是路由了，所以在一开始的地方就做一些限制，降低内部请求的暴露程度，尽可能的只留出我们需要的请求。这用到很多在route中的限制条件，比如：namespace, constraints, only等等条件，熟练使用，提高可管理程度。
 例如：
   
 ```
@@ -54,7 +54,6 @@ Application_controller > Base_controller > Version_controller
 具体如每个方法中需要的参数校验有很多不同方式来实现，个人觉得直接放在Version中去写，清晰明了。
 
 ```
-
       desc 'Create a status.'
       params do
         requires :status, type: String, desc: 'Your status.'
@@ -67,7 +66,6 @@ Application_controller > Base_controller > Version_controller
         })
       end
 
-
 ```
 这是grape中的一段代码，直接在方法实现的地方说明参数的相关信息，还可以编辑不同错误信息和代号，对错误处理也很友好。单独的gem，rails_params的方式也是类似的实现方式。
 
@@ -79,17 +77,17 @@ Application_controller > Base_controller > Version_controller
 比如，as_json, jbuilder, serializer 三种方式都可以实现格式化数据，不过其特点各异，所以适用的场景也不同。  
 
 ```
-
 as_json: 直接在modle文件中重写as_json方法，这样在数据导出时候就会调用这个方法，客观上达到了包装数据的目的。不过只适合的情景简单的情况下使用，但是最简单。  
 jbuilder: 可以通过直接定义文件来规定请求的数据返回格式。
 serializer: 可以直接在serializer文件夹中定义要导出的数据格式，实现与jbuilder类似。
-grape: grape用了 entity的方式，我觉得定义起来很简单，可以复用，也很明确，确实是个不错的实现方式。
-
+grape: grape用了grape-entity，我觉得定义起来很灵活明确，可复用，也有听过一些诟病，不过总体来讲，grape确实相当不错的API server最佳实践。
 
 ```
 
 ## Error handle
 处理请求的错误是必不可少的一个环节，错误反馈是一个API server是否优秀的代表。一般的，反馈需要给出一个既定的错误代码以及尽可能准确定位错误的提示信息。代码层，可以封装module，来做错误处理。可以定义异常再返回或者直接返回错误代码的方式来完成，错误信息可以通过配置文本来做处理。  
 关于错误处理，目前似乎没有成熟的gem来解决这个问题，不过见到过一个比较好的实践 [link](https://github.com/rails-api/active_model_serializers/issues/983)。  
+
+-
 
 当然以上所说，还是需要根据项目体积来决定，个人看法是，解决问题时第一位的，最适合的就是最好的。再好的架构，再牛逼的写法，如果不能跑，然并卵。
