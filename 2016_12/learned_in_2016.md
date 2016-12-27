@@ -35,23 +35,14 @@ AWS的服务器还是物美价廉，在国内裸着访问，速度也是不会�
 了解这些，是知道你的代码该放在哪儿的前提。  
 
 * app/controllers: 主要用来管理项目controller的代码。  
-
 * app/helpers: 一些controller的帮助方法，一些跟逻辑关联性不够强的，适用范围不仅限于当前的代码，可以放在这个里边。  
-
 * app/models: 主要与db关联文件，每个类可以对应一个table，也可以不对应，各自类中的类方法，实例方法都尽量放在这个里，如果并不是强关联或者多个类共用的，那就需要放进model 的concern里。  
-
 * app/views: 主要的页面文件。  
-
 * config: 一些主要的配置文件存储位置。  
-
 * db: 数据库内容，seeds文件，以及db的migration纪录文件。  
-
 * lib: 一些比较独立的内容，比如封装的service，module等等。  
-
 * log: 各种log文件。  
-
 * public: 各种静态文件等等的存储位置。  
-
 * vendor: 第三方的插件存储地。  
 * tmp: 存储各种程序运行过程中的临时文件。  
 * test: 测试文件存储，如果是rspec，则会有spec文件夹来存储。  
