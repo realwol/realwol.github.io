@@ -1,4 +1,4 @@
-TensorFlow Workflow
+# TensorFlow Workflow
 
 ```
 Mostly, It will work like the way below.
@@ -38,3 +38,9 @@ tensorflow以图为基本计算单位。一个典型图中，会有三个阶段�
 
 ## 8, 模型评估
 使用训练好的模型对test数据集中获取数据进行预测，得出结果，用来评估模型的训练陈果。
+
+## 总结
+Tensorflow 采用张量将数学操作连结起来的数据流图来做计算。
+图表是操作的集合。
+会话用来执行操作。
+
