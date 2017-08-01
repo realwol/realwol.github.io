@@ -31,6 +31,7 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
         os.makedirs(log_dir)
     # 创建训练model文件
     model_dir = os.path.join(os.path.expanduser(args.models_base_dir), subdir)
+    # 判断model文件夹是否存在
     if not os.path.isdir(model_dir):
         os.makedirs(model_dir)
 
@@ -74,6 +75,7 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
 
 ```
     with tf.Graph().as_default():
+        #根据之前保存的种子数据生成图级别的种子数据
         tf.set_random_seed(args.seed)
         # 定义global_step来记录训练步骤
         global_step = tf.Variable(0, trainable=False)
@@ -299,4 +301,143 @@ def train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueue_o
     summary.value.add(tag='time/total', simple_value=train_time)
     summary_writer.add_summary(summary, step)
     return step
+```
+在最后一行，有这样一行代码：
+
+```
+if __name__ == '__main__':
+  main(parse_arguments(sys.argv[1:]))
+```
+
+如果本文件被作为源文件来运行 __name__会被设置为 __main__，如果此文件被引入，那么__name__会被设置为引入的module name，这样就确保作为源文件运行时候运行main函数，但是被引入的情况下不会执行。也就是说，这行代码是文件执行的入口。
+
+总结来说：大概的流程如上，evaluate函数与train函数大同小异，执行文件之后，开始以main函数入口开始顺序执行：    
+* main函数后，定义图之前：做引入，文件导入等准备操作  
+* 图之后，会话之前：定义各种变量，操作以及操作所用到的参数，可以理解为做完所有准备工作。主要包括：  
+
+```
+1，图片，标签数据格式标准化，出列，入列。  
+2，train_op，以及train_op的必要参数：total_loss, global_step等，及其计算过程中的变量。summary_op。  
+3，tf.train.Saver新建。  
+```
+* session创建之后，开始运行：
+```
+1，运行各种初始化操作。  
+2，tf.train.start_queue_runners 运行所有collection中的queue runner。  
+3，根据epoch，epoch_size开始运行train方法。  
+```
+这样，基本所有的逻辑都可以捋清楚了。
+
+## train_softmax.py 注解。
+1，
+```
+# 避免已存在工具对import声明解读的混乱。
+from __future__ import absolute_import 
+# 引入python将来要实现的除法操作
+from __future__ import division
+# 将print方法引入低于3.0的python脚本
+from __future__ import print_function
+
+# 基本时间和日期类型
+from datetime import datetime
+# 各种操作系统接口
+import os.path
+# 实时时间获取以及转换
+import time
+# 允许使用某些属于系统或者解释器的变量或操作
+import sys
+# 产品伪随机数
+import random
+# 引入tensorflow
+import tensorflow as tf
+# 引入numpy
+import numpy as np
+# 更全的引入模块
+import importlib
+# 可以接收处理命令行输入
+import argparse
+# 引入facenet
+import facenet
+# 引入lfw
+import lfw
+# HDF5文件python接口，可以使用numpy处理大型文件
+import h5py
+# tensorflow的轻量级model定义，训练，评估库
+import tensorflow.contrib.slim as slim
+# 引入tensorflow.python中的 data_flow_ops模块 和 array_ops模块
+from tensorflow.python.ops import data_flow_ops
+from tensorflow.python.ops import array_ops
+# 引入 tensorflow.python.framework 中的 ops模块
+from tensorflow.python.framework import ops
+```
+
+2，
+```
+if __name__ == '__main__':
+  main(parse_arguments(sys.argv[1:]))
+```
+
+如果本文件被作为源文件来运行 __name__会被设置为 __main__，如果此文件被引入，那么__name__会被设置为引入的module name，这样就确保作为源文件运行时候运行main函数，但是被引入的情况下不会执行。也就是说，这行代码是文件执行的入口。
+
+3，
+
+```
+  # Build the inference graph
+  # inference 返回预测结果
+  prelogits, _ = network.inference(image_batch, args.keep_probability, 
+      phase_train=phase_train_placeholder, bottleneck_layer_size=args.embedding_size, 
+      weight_decay=args.weight_decay)
+  # 增加全链接层，输出最终预测结果。
+  logits = slim.fully_connected(prelogits, len(train_set), activation_fn=None, 
+          weights_initializer=tf.truncated_normal_initializer(stddev=0.1), 
+          weights_regularizer=slim.l2_regularizer(args.weight_decay),
+          scope='Logits', reuse=False)
+  # 用预测值做L2 norm。
+  embeddings = tf.nn.l2_normalize(prelogits, 1, 1e-10, name='embeddings')
+
+```
+
+这段代码，产生了相当重要的3个值 prelogits, logits 和 embeddings。
+
+### prelogtis 来源于network建立的推理的结果，netowrk的定义为：
+```
+network = importlib.import_module(args.model_def)
+parser.add_argument('--model_def', type=str,
+    help='Model definition. Points to a module containing the definition of the inference graph.', default='models.inception_resnet_v1')
+```
+由此可见，network使用model文件中的inception_resnet_v1model建立推理从而获得初步预测值 prelogtis。
+
+### logits： 是prelogti通过一个新建立的全连接层的计算结果。  
+### embeddings：对prelogits做 l2_normalize 操作之后的结果。  
+#### l2_normalize 使用L2范数对指定维度dim进行标准化，如果是多维，则对每个维度独立进行标准化。标准化可以有效防止模型过度拟合。  
+
+4，
+```
+  # Add center loss
+  if args.center_loss_factor>0.0:
+      prelogits_center_loss, _ = facenet.center_loss(prelogits, label_batch, args.center_loss_alfa, nrof_classes)
+      # 将regularization_loss加入collection
+      tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES, prelogits_center_loss * args.center_loss_factor)
+
+  # 根据label和logits 计算交叉熵
+  cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+      labels=label_batch, logits=logits, name='cross_entropy_per_example')
+  # 平均交叉熵
+  cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+  # 将平均交叉熵保存名为losses的collection中
+  tf.add_to_collection('losses', cross_entropy_mean)
+  # Calculate the total losses
+  # prelogits_center_loss * center_loss_factor + cross_entropy_mean
+  regularization_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+  total_loss = tf.add_n([cross_entropy_mean] + regularization_losses, name='total_loss')
+```
+
+这里通过计算得出total_loss，total_loss是由 cross_entropy_mean 和 regularization_loss 的计算得出，cross_entropy_mean和cross_entropy是由 labels和logits对比产生的。regularization_loss是 prelogits_center_loss * args.center_loss_factor 计算得来的。  
+这样通过上述关系以及以定义的变量或者操作，就可以计算出total_loss。  
+
+5， train_op 就是将上边计算出来的结果作为步骤保存起来，以便在session中调用。
+
+```
+  train_op = facenet.train(total_loss, global_step, args.optimizer, 
+      learning_rate, args.moving_average_decay, tf.global_variables(), args.log_histograms)
 ```
