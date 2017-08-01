@@ -49,6 +49,7 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
     if args.filter_filename:
         train_set = filter_dataset(train_set, os.path.expanduser(args.filter_filename), 
             args.filter_percentile, args.filter_min_nrof_images_per_class)
+    # 训练数据种类
     nrof_classes = len(train_set)
     
     print('Model directory: %s' % model_dir)
@@ -74,37 +75,45 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
 ```
     with tf.Graph().as_default():
         tf.set_random_seed(args.seed)
-        # 定义global_step来保存训练步骤
+        # 定义global_step来记录训练步骤
         global_step = tf.Variable(0, trainable=False)
         # Get a list of image paths and their labels
         image_list, label_list = facenet.get_image_paths_and_labels(train_set)
+        # 如果数据为空，跳出
         assert len(image_list)>0, 'The dataset should not be empty'
         
-        # Create a queue that produces indices into the image_list and label_list 
+        # 将labels转为tensor，用来与logits计算cross_entropy
         labels = ops.convert_to_tensor(label_list, dtype=tf.int32)
         range_size = array_ops.shape(labels)[0]
+        # 生成队列index
         index_queue = tf.train.range_input_producer(range_size, num_epochs=None,
                              shuffle=True, seed=None, capacity=32)
         # 定义出列op
         index_dequeue_op = index_queue.dequeue_many(args.batch_size*args.epoch_size, 'index_dequeue')
 
         # placeholders
+        # 学习曲线
         learning_rate_placeholder = tf.placeholder(tf.float32, name='learning_rate')
+        # 每次train的样本数量
         batch_size_placeholder = tf.placeholder(tf.int32, name='batch_size')
         phase_train_placeholder = tf.placeholder(tf.bool, name='phase_train')
+        # 样本路径
         image_paths_placeholder = tf.placeholder(tf.string, shape=(None,1), name='image_paths')
+        # labels
         labels_placeholder = tf.placeholder(tf.int64, shape=(None,1), name='labels')
+        # 定义FIFO队列
         input_queue = data_flow_ops.FIFOQueue(capacity=100000,
                                     dtypes=[tf.string, tf.int64],
                                     shapes=[(1,), (1,)],
                                     shared_name=None, name=None)
-        # 定义入列op
+        # 定义入列op，将样本和对应label入列
         enqueue_op = input_queue.enqueue_many([image_paths_placeholder, labels_placeholder], name='enqueue_op')
         
-        # 图片数据规则化处理
+        # 图片数据扩充处理
         nrof_preprocess_threads = 4
         images_and_labels = []
         for _ in range(nrof_preprocess_threads):
+            # 图片出列
             filenames, label = input_queue.dequeue()
             images = []
             for filename in tf.unstack(filenames):
@@ -124,11 +133,13 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
                 images.append(tf.image.per_image_standardization(image))
             images_and_labels.append([images, label])
 
+        # 用images_and_labels来填充／新建队列
         image_batch, label_batch = tf.train.batch_join(
             images_and_labels, batch_size=batch_size_placeholder, 
             shapes=[(args.image_size, args.image_size, 3), ()], enqueue_many=True,
             capacity=4 * nrof_preprocess_threads * args.batch_size,
             allow_smaller_final_batch=True)
+        # 新建对象
         image_batch = tf.identity(image_batch, 'image_batch')
         image_batch = tf.identity(image_batch, 'input')
         label_batch = tf.identity(label_batch, 'label_batch')
@@ -139,36 +150,46 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
         print('Building training graph')
         
         # Build the inference graph
+        # prelogits：inference的预测结果
         prelogits, _ = network.inference(image_batch, args.keep_probability, 
             phase_train=phase_train_placeholder, bottleneck_layer_size=args.embedding_size, 
             weight_decay=args.weight_decay)
+        # logits：prelogits经过全连接层之后的输出
         logits = slim.fully_connected(prelogits, len(train_set), activation_fn=None, 
                 weights_initializer=tf.truncated_normal_initializer(stddev=0.1), 
                 weights_regularizer=slim.l2_regularizer(args.weight_decay),
                 scope='Logits', reuse=False)
 
+        # embeddings：prelogtis做L2 Norm操作。
         embeddings = tf.nn.l2_normalize(prelogits, 1, 1e-10, name='embeddings')
 
         # Add center loss
+        # prelogits_center_loss：添加center_loss，softmax_loss之上加入正则项，使得样本特征向量可以尽量聚集
         if args.center_loss_factor>0.0:
             prelogits_center_loss, _ = facenet.center_loss(prelogits, label_batch, args.center_loss_alfa, nrof_classes)
+            # 保存regularization_loss
             tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES, prelogits_center_loss * args.center_loss_factor)
 
+        # 得到指数衰减之后的learning_rate
         learning_rate = tf.train.exponential_decay(learning_rate_placeholder, global_step,
             args.learning_rate_decay_epochs*args.epoch_size, args.learning_rate_decay_factor, staircase=True)
         tf.summary.scalar('learning_rate', learning_rate)
 
-        # Calculate the average cross entropy loss across the batch
+        # 根据label和logits 计算交叉熵
         cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
             labels=label_batch, logits=logits, name='cross_entropy_per_example')
+        # 平均交叉熵
         cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+        # 将平均交叉熵保存名为losses的collection中
         tf.add_to_collection('losses', cross_entropy_mean)
         
         # Calculate the total losses
+        # prelogits_center_loss * center_loss_factor + cross_entropy_mean
         regularization_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
         total_loss = tf.add_n([cross_entropy_mean] + regularization_losses, name='total_loss')
 
         # Build a Graph that trains the model with one batch of examples and updates the model parameters
+        # 定义训练操作
         train_op = facenet.train(total_loss, global_step, args.optimizer, 
             learning_rate, args.moving_average_decay, tf.global_variables(), args.log_histograms)
         
@@ -222,3 +243,60 @@ parse_arguments函数，处理main函数所接收的参数以及其默认值。
 ```
 最终的返回结果是 训练完之后model的文件位置。
 
+其次，train函数具体如下：
+
+```
+# 传入op
+# index_dequeue_op
+# enqueue_op
+# global_step
+# loss
+# train_op
+# summary_op
+# regularization_losses
+# learning_rate_schedule_file
+
+def train(args, sess, epoch, image_list, label_list, index_dequeue_op, enqueue_op, image_paths_placeholder, labels_placeholder, 
+      learning_rate_placeholder, phase_train_placeholder, batch_size_placeholder, global_step, 
+      loss, train_op, summary_op, summary_writer, regularization_losses, learning_rate_schedule_file):
+    batch_number = 0
+    
+    if args.learning_rate>0.0:
+        lr = args.learning_rate
+    else:
+        lr = facenet.get_learning_rate_from_file(learning_rate_schedule_file, epoch)
+    # 获取图片index队列
+    index_epoch = sess.run(index_dequeue_op)
+    label_epoch = np.array(label_list)[index_epoch]
+    image_epoch = np.array(image_list)[index_epoch]
+    
+    # Enqueue one epoch of image paths and labels
+    # expand_dims: 数据维度扩展，插入一个新坐标轴
+    labels_array = np.expand_dims(np.array(label_epoch),1)
+    image_paths_array = np.expand_dims(np.array(image_epoch),1)
+    # 维度扩展之后，执行入列操作
+    sess.run(enqueue_op, {image_paths_placeholder: image_paths_array, labels_placeholder: labels_array})
+
+    # Training loop
+    train_time = 0
+    while batch_number < args.epoch_size:
+        start_time = time.time()
+        feed_dict = {learning_rate_placeholder: lr, phase_train_placeholder:True, batch_size_placeholder:args.batch_size}
+        if (batch_number % 100 == 0):
+            # 根据feed_dict传入参数变化，各个op的结果会产品相应变化
+            err, _, step, reg_loss, summary_str = sess.run([loss, train_op, global_step, regularization_losses, summary_op], feed_dict=feed_dict)
+            summary_writer.add_summary(summary_str, global_step=step)
+        else:
+            err, _, step, reg_loss = sess.run([loss, train_op, global_step, regularization_losses], feed_dict=feed_dict)
+        duration = time.time() - start_time
+        print('Epoch: [%d][%d/%d]\tTime %.3f\tLoss %2.3f\tRegLoss %2.3f' %
+              (epoch, batch_number+1, args.epoch_size, duration, err, np.sum(reg_loss)))
+        batch_number += 1
+        train_time += duration
+    # Add validation loss and accuracy to summary
+    summary = tf.Summary()
+    #pylint: disable=maybe-no-member
+    summary.value.add(tag='time/total', simple_value=train_time)
+    summary_writer.add_summary(summary, step)
+    return step
+```
