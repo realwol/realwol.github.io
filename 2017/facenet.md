@@ -447,3 +447,6 @@ regularization_loss => prelogits_center_loss * args.center_loss_factor
   train_op = facenet.train(total_loss, global_step, args.optimizer, 
       learning_rate, args.moving_average_decay, tf.global_variables(), args.log_histograms)
 ```
+
+6，新建inference的时候使用的是 inception_resnet_v1 model，这个model定义在当前 model/inception_resnet_v1.py中  
+这个model应该是整个算法中的核心点。
