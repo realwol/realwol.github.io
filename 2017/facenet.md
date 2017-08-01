@@ -311,7 +311,7 @@ if __name__ == '__main__':
 
 如果本文件被作为源文件来运行 __name__会被设置为 __main__，如果此文件被引入，那么__name__会被设置为引入的module name，这样就确保作为源文件运行时候运行main函数，但是被引入的情况下不会执行。也就是说，这行代码是文件执行的入口。
 
-总结来说：大概的流程如上，evaluate函数与train函数大同小异，执行文件之后，开始以main函数入口开始顺序执行：    
+总结来说：训练流程如上所述，evaluate函数与train函数大同小异，执行文件之后，开始以main函数入口开始顺序执行：    
 * main函数后，定义图之前：做引入，文件导入等准备操作  
 * 图之后，会话之前：定义各种变量，操作以及操作所用到的参数，可以理解为做完所有准备工作。主要包括：  
 
@@ -324,9 +324,9 @@ if __name__ == '__main__':
 ```
 1，运行各种初始化操作。  
 2，tf.train.start_queue_runners 运行所有collection中的queue runner。  
-3，根据epoch，epoch_size开始运行train方法。  
+3，一个epoch，epoch_size控制的循环，开始运行train方法。  
 ```
-这样，基本所有的逻辑都可以捋清楚了。
+这就是整个softmax_train的流程。
 
 ## train_softmax.py 注解。
 1，
@@ -422,18 +422,24 @@ parser.add_argument('--model_def', type=str,
   # 根据label和logits 计算交叉熵
   cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
       labels=label_batch, logits=logits, name='cross_entropy_per_example')
+
   # 平均交叉熵
   cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+
   # 将平均交叉熵保存名为losses的collection中
   tf.add_to_collection('losses', cross_entropy_mean)
+
   # Calculate the total losses
   # prelogits_center_loss * center_loss_factor + cross_entropy_mean
   regularization_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
   total_loss = tf.add_n([cross_entropy_mean] + regularization_losses, name='total_loss')
 ```
 
-这里通过计算得出total_loss，total_loss是由 cross_entropy_mean 和 regularization_loss 的计算得出，cross_entropy_mean和cross_entropy是由 labels和logits对比产生的。regularization_loss是 prelogits_center_loss * args.center_loss_factor 计算得来的。  
-这样通过上述关系以及以定义的变量或者操作，就可以计算出total_loss。  
+这里通过计算得出total_loss  
+total_loss => cross_entropy_mean, regularization_loss  
+cross_entropy_mean, cross_entropy => labels, logits  
+regularization_loss => prelogits_center_loss * args.center_loss_factor  
+
 
 5， train_op 就是将上边计算出来的结果作为步骤保存起来，以便在session中调用。
 
